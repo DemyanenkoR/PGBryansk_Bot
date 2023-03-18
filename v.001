@@ -1,0 +1,133 @@
+import folium  
+from telegram import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove 
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters  
+import os 
+from PIL import Image
+import sqlite3
+ 
+# Обработчик команды /start  
+def start(update, context):  
+    # Создаем кнопку для отправки геопозиции  
+    
+    update.message.reply_text('Привет! Я Законопослушный Гражданин, бот внутри Telegram на базе искуственного интелекта. Пришли мне  фотографию ямы на дороге.  ВАЖНО! Перед началом проверь, включена ли у тебя геоолокация!')
+
+   # Создаем кнопку для отправки геопозиции  
+    button = KeyboardButton('Отправить геопозицию', request_location=True)  
+    keyboard = ReplyKeyboardMarkup([[button]], resize_keyboard=True)  
+  
+    # Создаем объект карты с центром в Брянске и сохраняем его в bot_data  
+    if 'map' not in context.bot_data:  
+        m = folium.Map(location=[53.243562, 34.363407], zoom_start=10)  
+        folium.TileLayer('Stamen Terrain').add_to(m)  
+        folium.TileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attr='Esri', name='Esri Satellite', overlay=True).add_to(m)  
+        folium.LayerControl().add_to(m)  
+        context.bot_data['map'] = m  
+  
+     # Удаление клавиатуры с запросом геопозиции
+    update.message.reply_markup = ReplyKeyboardRemove() 
+
+    # Создаем соединение с базой данных в директории /home/user/db/
+conn = sqlite3.connect('C:/Users/Admin/Robot/yamadb.db')
+
+# Создаем таблицу для хранения данных о ямах
+conn.execute('''CREATE TABLE IF NOT EXISTS yamas
+             (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             latitude REAL NOT NULL,
+             longitude REAL NOT NULL,
+             depth REAL NOT NULL,
+             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+
+# Закрываем соединение с базой данных
+conn.close()
+ 
+# Обработчик сообщения с фото 
+def photo(update, context):
+    # Получаем размер фото из аргумента size (по умолчанию 640)
+    size = int(context.args[0]) if context.args and context.args[0].isdigit() else 200
+    
+    photo_file = update.message.photo[-1].get_file()
+    photo_path = f'photos/{photo_file.file_id}.jpg'
+
+    if not os.path.exists('photos'):
+        os.makedirs('photos')
+
+    filename = f'photo_{size}.jpg'  # добавляем размер в название файла
+    with open('photos/' + filename, 'wb') as f:
+        # сохранение файла в папку photos
+        photo_file.download(photo_path)
+        
+        # изменение размера фото
+        image = Image.open(photo_path)
+        width, height = image.size
+        if width > size:
+            ratio = size / width
+            new_size = (size, int(height * ratio))
+            image = image.resize(new_size)
+            image.save(photo_path)
+
+    context.user_data['photo'] = photo_path
+
+    update.message.reply_text('Отлично! Теперь напиши комментарий к фото ямы.')
+ 
+# Обработчик сообщения с комментарием 
+def comment(update, context): 
+    comment = update.message.text 
+    context.user_data['comment'] = comment 
+ 
+    update.message.reply_text('Теперь отправь мне геопозицию ямы, нажав на кнопку ниже.', reply_markup=keyboard) 
+ 
+def location(update, context): 
+    # Получаем геопозицию 
+    lat = update.message.location.latitude 
+    lon = update.message.location.longitude 
+
+    # Создаем соединение с базой данных в директории /home/user/db/
+    conn = sqlite3.connect('C:/Users/Admin/Robot/yamadb.db')
+    
+    # Добавляем новую яму в таблицу
+    depth = 2.5
+    conn.execute("INSERT INTO yamas (latitude, longitude, depth) VALUES (?, ?, ?)", (lat, lon, depth))
+
+    # Сохраняем изменения в базе данных
+    conn.commit()
+
+    # Закрываем соединение с базой данных
+    conn.close()
+
+    # Получаем объект карты из bot_data 
+    m = context.bot_data['map'] 
+ 
+    # Получаем комментарий пользователя и фото из контекста 
+    comment = context.user_data.get('comment') 
+    photo = context.user_data.get('photo') 
+ 
+    # Добавляем маркер на карту с комментарием и фото 
+    popup_html = f'<b>Комментарий:</b> {comment}<br><img src="{photo}" alt="Фото">' 
+    folium.Marker([lat, lon], popup=popup_html, icon=folium.Icon(icon='star')).add_to(m) 
+ 
+    # Отправляем ответ пользователю  
+    update.message.reply_text('Яма успешно добавлена на карту! Спасибо за участие в улучшении дорожной ситуации.')
+  
+    # Сохраняем карту как HTML-файл 
+    m.save('map.html') 
+ 
+# Токен Telegram бота  
+TOKEN = '6240666729:AAHsNKCOVkkFEqEQnewM5ezGZHEEhah5Gkc'  
+ 
+# Создаем экземпляр бота  
+updater = Updater(TOKEN, use_context=True)  
+ 
+# Создаем кнопку для отправки геопозиции  
+button = KeyboardButton('Отправить геопозицию', request_location=True)  
+keyboard = ReplyKeyboardMarkup([[button]], resize_keyboard=True)  
+
+
+# Добавляем обработчики команд и сообщений  
+updater.dispatcher.add_handler(CommandHandler('start', start))  
+updater.dispatcher.add_handler(MessageHandler(Filters.photo, photo)) 
+updater.dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, comment)) 
+updater.dispatcher.add_handler(MessageHandler(Filters.location, location))  
+
+# Запускаем бота  
+updater.start_polling()  
+updater.idle()
